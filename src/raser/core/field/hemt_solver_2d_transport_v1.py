@@ -92,6 +92,47 @@ def _create_fn_contact(device, contact, bias_parameter):
     )
 
 
+def _check_hemt_setup(device, raw):
+    """Check actual DEVSIM inputs against the committed JSON before solving."""
+    doping = raw["doping"]
+    regions = ("AlGaN_barrier", "GaN_buffer")
+    for region in regions:
+        overrides = doping.get("by_region", {}).get(region, {})
+        for name in ("Donors", "Acceptors"):
+            expected = float(overrides.get(name, doping.get(name, "0")))
+            values = list(map(float, devsim.get_node_model_values(
+                device=device, region=region, name=name
+            )))
+            if not values or any(
+                (not math.isfinite(v)) or abs(v - expected) > max(1e-3, 1e-9 * abs(expected))
+                for v in values
+            ):
+                raise RuntimeError(
+                    f"HEMT {region}/{name} does not match JSON: expected {expected:g}; "
+                    f"actual range {min(values) if values else None}..{max(values) if values else None}"
+                )
+        for name in ("N_c", "Permittivity", "Volt_thermal", "eps"):
+            value = float(devsim.get_parameter(device=device, region=region, name=name))
+            if not math.isfinite(value) or value <= 0:
+                raise RuntimeError(f"HEMT {region}/{name} invalid: {value}")
+        print(
+            f"[HEMT-INPUT-AUDIT] {region}: "
+            f"Donors={float(doping.get('by_region', {}).get(region, {}).get('Donors', doping.get('Donors', 0))):.6e}, "
+            f"Acceptors={float(doping.get('by_region', {}).get(region, {}).get('Acceptors', doping.get('Acceptors', 0))):.6e}, "
+            f"eps={float(devsim.get_parameter(device=device, region=region, name='eps')):.6g}",
+            flush=True,
+        )
+    sigma = float(devsim.get_parameter(
+        device=device, region="GaN_buffer", name="SigmaPol_C_cm2"
+    ))
+    offset = float(devsim.get_parameter(
+        device=device, region="AlGaN_barrier", name="EcOffset_eV"
+    ))
+    if not math.isfinite(sigma) or not math.isfinite(offset) or offset <= 0:
+        raise RuntimeError("Invalid HEMT polarization/band-offset parameters")
+    print(f"[HEMT-INPUT-AUDIT] sigma={sigma:.6e} C/cm^2, EcOffset={offset:.6g} eV", flush=True)
+
+
 def _create_region_models(device, region, material, ef, mobility, cfg, interface_y_cm):
     """Create a coupled Potential / electron quasi-Fermi system for one region."""
     devsim.set_parameter(device=device, region=region, name="HEMT_mu_n", value=float(mobility))
@@ -363,6 +404,7 @@ def run_hemt_transport(detector, kwargs, paras):
         raise ValueError(f"Missing heterointerface {IFACE}; found {sorted(actual_interfaces)}")
 
     create_parameter(detector, device, detector.region)
+    _check_hemt_setup(device, raw)
     T = float(detector.temperature)
     vt = KB * T / Q
     nc_gan = float(devsim.get_parameter(device=device, region=GAN, name="N_c"))

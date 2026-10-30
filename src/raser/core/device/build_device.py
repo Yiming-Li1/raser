@@ -227,6 +227,14 @@ class Detector:
         if "3d" in self.det_model.lower():
             return None
 
+        # HEMT handles its layered electrostatics in the 2D Poisson solve.
+        # The generic one-material parallel-plate estimate is not applicable.
+        if (
+            self.device_dict.get("hemt_physics", {}).get("transport_model")
+            == "drift_diffusion_v1"
+        ):
+            return None
+
         if self.depletion_depth <= 0:
             raise ValueError("depletion_depth must be positive")
 

@@ -182,6 +182,17 @@ def delete_init(device, region):
     devsim.delete_node_model(device=device, region=region, name="IntrinsicCharge:Potential")
 
 def create_parameter(MyDetector, device, region):
+    if (
+        MyDetector.device_dict.get("hemt_physics", {}).get("transport_model")
+        == "drift_diffusion_v1"
+    ):
+        # Initialize real DEVSIM material regions (AlGaN_barrier/GaN_buffer),
+        # not detector.region, which is merely the device name.
+        from .hemt_material_params import initialize_hemt_materials
+        return initialize_hemt_materials(
+            MyDetector, device, CreateGlobalConstant, model_create.CreateNodeModel
+        )
+
     T = MyDetector.device_dict['temperature']
     CreateGlobalConstant(T, device, region)
     if devsim.get_material(device=device, region=region) == "SiliconCarbide":
